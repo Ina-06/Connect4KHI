@@ -25,7 +25,7 @@ void board_print(const Board *b, FILE *out) {
         }
         fputc('\n', out);
     }
-    fputs(" +---------------+\n  1 2 3 4 5 6 7\n\n", out);
+    fputs("  1 2 3 4 5 6 7\n\n", out);
 }
 
 bool board_drop(Board *b, int col, char piece, int *out_row) {
