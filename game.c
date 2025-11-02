@@ -1,7 +1,6 @@
 #include "game.h"
 #include "board.h"
 #include "io.h"
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -13,13 +12,9 @@
    Utilities
    =============================================================== */
 
-static inline int in_bounds(int r, int c) {
-    return (r >= 0 && r < ROWS && c >= 0 && c < COLS);
-}
-
 static inline char opp_of(char p) { return (p == 'A') ? 'B' : 'A'; }
 
-/* Find next open row in column (without modifying the board). */
+/* Optional helper (not required by board_drop) */
 static int find_next_open_row(const Board *b, int col) {
     if (col < 0 || col >= COLS) return -1;
     for (int r = ROWS - 1; r >= 0; --r) {
@@ -28,7 +23,7 @@ static int find_next_open_row(const Board *b, int col) {
     return -1;
 }
 
-/* Choose a random valid column (0..6), or -1 if none */
+/* Easy bot: choose a random valid column */
 static int random_valid_column(const Board *b) {
     int valid_cols[COLS];
     int count = 0;
@@ -41,7 +36,7 @@ static int random_valid_column(const Board *b) {
 }
 
 /* ===============================================================
-   Robust menu reader (fixes "invalid" with CRLF, commas, etc.)
+   Robust menu reader (handles CRLF, commas, spaces)
    =============================================================== */
 
 static int read_mode_choice(void) {
@@ -216,8 +211,7 @@ static int medium_rule_based_move(const Board *b0, char aiPiece) {
         int row = -1;
         if (!board_drop(&b, c, aiPiece, &row)) continue;
         int s = score_position(&b, aiPiece);
-        /* light center bias */
-        s -= (c > center ? c - center : center - c);
+        s -= (c > center ? c - center : center - c); /* light center bias */
         if (s > bestScore) { bestScore = s; bestCol = c; }
     }
 
@@ -269,17 +263,14 @@ int game_run(void) {
             }
             printf("MediumBot (Player B) chooses column %d\n", col + 1);
         } else {
-            /* Human turn (Player A vs bot in modes 1/2, both A & B in mode 3) */
+            /* Human turn */
             printf("Player %c \xE2\x86\x92 ", p);
             IoStatus st = io_read_column(&col);
             if (st == IO_QUIT || st == IO_EOF_QUIT) {
                 puts("\nGoodbye!");
                 return 0;
             }
-            if (st != IO_SUCCESS) {
-                /* retry */
-                continue;
-            }
+            if (st != IO_SUCCESS) continue; /* safety */
         }
 
         int row = -1;
