@@ -8,6 +8,7 @@
 #include <time.h>
 #include <string.h>
 #include <limits.h>
+#include <ctype.h>
 
 // Helpers for AI + existing easy bot
 
@@ -24,32 +25,56 @@ static int random_valid_column(const Board *b) {
 }
 
 // Read "1".."3" as mode using fgets 
+
 static int read_mode_choice(void) {
-    char line[32];
-    while (1) {
-        puts("Select mode:");
-        puts("  1 - Play against Easy Bot (You are Player A)");
-        puts("  2 - Play against Medium Bot (You are Player A)");
-        puts("  3 - Two Player mode (A vs B)");
-        fputs("Enter 1, 2, or 3: ", stdout);
+    char line[128];
+
+    for (;;) {
+        printf("Select mode:
+");
+        printf("  1 - Play against Easy Bot (You are Player A)
+");
+        printf("  2 - Play against Medium Bot (You are Player A)
+");
+        printf("  3 - Two Player mode (A vs B)
+");
+        printf("Enter 1, 2, or 3: ");
         fflush(stdout);
 
         if (!fgets(line, sizeof line, stdin)) {
-            fputc('\\n', stdout);
-            return 0; // treat EOF as cancel
+            putchar('\n');
+            return 0; // EOF -> quit
         }
 
-        // trim trailing newline
+        // Strip ALL trailing CR/LF
         size_t n = strlen(line);
-        if (n && (line[n-1] == '\\n' || line[n-1] == '\\r')) line[--n] = '\\0';
-
-        if ((n == 1) && (line[0] == '1' || line[0] == '2' || line[0] == '3')) {
-            return (line[0] - '0');
+        while (n > 0 && (line[n-1] == '\n' || line[n-1] == '\r')) {
+            line[--n] = '\0';
         }
 
-        puts("Invalid choice. Please enter 1, 2, or 3.\\n");
+        // Skip leading whitespace
+        char *p = line;
+        while (*p && isspace((unsigned char)*p)) p++;
+
+        // Optional 'q' to quit
+        if (*p == 'q' || *p == 'Q') return 0;
+
+        // Fast path: first non-space is digit 1..3
+        if (*p >= '1' && *p <= '3') return *p - '0';
+
+        // Fallback: find and parse first integer token
+        char *end = NULL;
+        long v = strtol(p, &end, 10);
+        if (end == p) {
+            while (*p && !isdigit((unsigned char)*p) && *p!='+' && *p!='-') p++;
+            if (*p) v = strtol(p, &end, 10);
+        }
+        if (end != p && v >= 1 && v <= 3) return (int)v;
+
+        printf("Invalid choice. Please enter 1, 2, or 3. \n\n");
     }
 }
+
 
 /* 
    Medium Bot (heuristic 1-ply + safety)

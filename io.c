@@ -15,17 +15,55 @@ s[--n] = '\0';
 }
 
 
+
+// Accepts first integer 1–7 on the line, tolerant of commas/words, trims CRLF, supports q/Q to quit
 IoStatus io_read_column(int *out_col) {
-char line[64];
-fputs("Choose column (1-7) or 'q' to quit: ", stdout);
-fflush(stdout);
+    char buf[128];
 
+    fputs("Enter column (1-7) or 'q' to quit: ", stdout);
+    fflush(stdout);
 
-if (!fgets(line, sizeof line, stdin)) {
-// EOF or error = treat as quit
-fputc('\n', stdout);
-return IO_EOF_QUIT;
+    if (!fgets(buf, sizeof buf, stdin)) {
+        fputc('\n', stdout);
+        return IO_EOF_QUIT; // Ctrl+D / EOF
+    }
+
+    // Strip ALL trailing CR/LF
+    size_t n = strlen(buf);
+    while (n > 0 && (buf[n-1] == '\n' || buf[n-1] == '\r')) {
+        buf[--n] = '\0';
+    }
+
+    // Skip leading spaces
+    char *p = buf;
+    while (*p && isspace((unsigned char)*p)) p++;
+
+    // Allow q/Q anywhere as first non-space char
+    if (*p == 'q' || *p == 'Q') return IO_QUIT;
+
+    // Parse first integer token (handles "3,", "  5 please", etc.)
+    char *end = NULL;
+    long v = strtol(p, &end, 10);
+    if (end == p) {
+        // If the line started with a comma/word, advance to first digit and try again
+        while (*p && !isdigit((unsigned char)*p) && *p != '+' && *p != '-') p++;
+        if (*p) v = strtol(p, &end, 10);
+    }
+
+    if (end == p) {
+        puts("Invalid input. Type a number 1-7 or 'q'.");
+        return IO_RETRY;
+    }
+    if (v < 1 || v > 7) {
+        puts("Column must be between 1 and 7.");
+        return IO_RETRY;
+    }
+
+    if (out_col) *out_col = (int)v - 1; // map 1–7 to 0–6
+    return IO_SUCCESS;
 }
+
+
 rstrip(line);
 
 
