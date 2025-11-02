@@ -1,4 +1,3 @@
-
 #include "game.h"
 #include "board.h"
 #include "io.h"
@@ -10,9 +9,26 @@
 #include <limits.h>
 #include <ctype.h>
 
-// Helpers for AI + existing easy bot
+/* ===============================================================
+   Utilities
+   =============================================================== */
 
-// Pick a random valid column (0..6), or -1 if none
+static inline int in_bounds(int r, int c) {
+    return (r >= 0 && r < ROWS && c >= 0 && c < COLS);
+}
+
+static inline char opp_of(char p) { return (p == 'A') ? 'B' : 'A'; }
+
+/* Find next open row in column (without modifying the board). */
+static int find_next_open_row(const Board *b, int col) {
+    if (col < 0 || col >= COLS) return -1;
+    for (int r = ROWS - 1; r >= 0; --r) {
+        if (b->cells[r][col] == ' ') return r;
+    }
+    return -1;
+}
+
+/* Choose a random valid column (0..6), or -1 if none */
 static int random_valid_column(const Board *b) {
     int valid_cols[COLS];
     int count = 0;
@@ -24,79 +40,55 @@ static int random_valid_column(const Board *b) {
     return valid_cols[rand() % count];
 }
 
-// Read "1".."3" as mode using fgets 
+/* ===============================================================
+   Robust menu reader (fixes "invalid" with CRLF, commas, etc.)
+   =============================================================== */
 
 static int read_mode_choice(void) {
     char line[128];
 
     for (;;) {
-        printf("Select mode:
-");
-        printf("  1 - Play against Easy Bot (You are Player A)
-");
-        printf("  2 - Play against Medium Bot (You are Player A)
-");
-        printf("  3 - Two Player mode (A vs B)
-");
+        printf("Select mode:\n");
+        printf("  1 - Play against Easy Bot (You are Player A)\n");
+        printf("  2 - Play against Medium Bot (You are Player A)\n");
+        printf("  3 - Two Player mode (A vs B)\n");
         printf("Enter 1, 2, or 3: ");
         fflush(stdout);
 
         if (!fgets(line, sizeof line, stdin)) {
             putchar('\n');
-            return 0; // EOF -> quit
+            return 0; // EOF => quit
         }
 
-        // Strip ALL trailing CR/LF
+        /* strip trailing CR/LF and spaces */
         size_t n = strlen(line);
-        while (n > 0 && (line[n-1] == '\n' || line[n-1] == '\r')) {
+        while (n > 0 && (line[n-1] == '\n' || line[n-1] == '\r' ||
+                         isspace((unsigned char)line[n-1]))) {
             line[--n] = '\0';
         }
 
-        // Skip leading whitespace
+        /* skip leading spaces */
         char *p = line;
         while (*p && isspace((unsigned char)*p)) p++;
 
-        // Optional 'q' to quit
+        /* allow 'q'/'Q' to quit */
         if (*p == 'q' || *p == 'Q') return 0;
 
-        // Fast path: first non-space is digit 1..3
-        if (*p >= '1' && *p <= '3') return *p - '0';
-
-        // Fallback: find and parse first integer token
-        char *end = NULL;
-        long v = strtol(p, &end, 10);
-        if (end == p) {
-            while (*p && !isdigit((unsigned char)*p) && *p!='+' && *p!='-') p++;
-            if (*p) v = strtol(p, &end, 10);
+        /* find first digit 1..3 anywhere in the line */
+        while (*p && !isdigit((unsigned char)*p)) p++;
+        if (*p >= '1' && *p <= '3') {
+            return *p - '0';
         }
-        if (end != p && v >= 1 && v <= 3) return (int)v;
 
-        printf("Invalid choice. Please enter 1, 2, or 3. \n\n");
+        printf("Invalid choice. Please enter 1, 2, or 3.\n\n");
     }
 }
 
+/* ===============================================================
+   Heuristic scoring (for 1-ply evaluation)
+   =============================================================== */
 
-/* 
-   Medium Bot (heuristic 1-ply + safety)
-   - Win now if possible
-   - Else block opponent's immediate win
-   - Else avoid moves that allow opponent immediate win next
-   - Else prefer center and higher-scoring positions
-   */
-
-static inline char opp_of(char p) { return (p == 'A') ? 'B' : 'A'; }
-
-// Find next open row in column 
-static int find_next_open_row(const Board *b, int col) {
-    if (col < 0 || col >= COLS) return -1;
-    for (int r = ROWS - 1; r >= 0; --r) {
-        if (b->cells[r][col] == ' ') return r;
-    }
-    return -1;
-}
-
-// 4-cell window scoring
-static int score_window_chars(const char w[4], char me) {
+static int score_window(const char w[4], char me) {
     char you = opp_of(me);
     int meCnt = 0, youCnt = 0, emptyCnt = 0;
     for (int i = 0; i < 4; ++i) {
@@ -108,7 +100,7 @@ static int score_window_chars(const char w[4], char me) {
     if (meCnt == 3 && emptyCnt == 1) return 500;
     if (meCnt == 2 && emptyCnt == 2) return 50;
 
-    if (youCnt == 3 && emptyCnt == 1) return -450;
+    if (youCnt == 3 && emptyCnt == 1) return -450; /* slightly < +500 */
     if (youCnt == 2 && emptyCnt == 2) return -40;
     return 0;
 }
@@ -116,40 +108,41 @@ static int score_window_chars(const char w[4], char me) {
 static int score_position(const Board *b, char me) {
     int score = 0;
 
-    // Center bias
+    /* Center bias */
     int center = COLS / 2;
     int centerCount = 0;
     for (int r = 0; r < ROWS; ++r) if (b->cells[r][center] == me) ++centerCount;
     score += centerCount * 7;
 
-    // Windows of 4 in all directions
+    /* All windows of 4 */
     char w[4];
-    // Horizontal
+
+    /* Horizontal */
     for (int r = 0; r < ROWS; ++r) {
         for (int c = 0; c < COLS - 3; ++c) {
             for (int k = 0; k < 4; ++k) w[k] = b->cells[r][c + k];
-            score += score_window_chars(w, me);
+            score += score_window(w, me);
         }
     }
-    // Vertical
+    /* Vertical */
     for (int c = 0; c < COLS; ++c) {
         for (int r = 0; r < ROWS - 3; ++r) {
             for (int k = 0; k < 4; ++k) w[k] = b->cells[r + k][c];
-            score += score_window_chars(w, me);
+            score += score_window(w, me);
         }
     }
-    // Diagonal down-right
+    /* Diagonal down-right */
     for (int r = 0; r < ROWS - 3; ++r) {
         for (int c = 0; c < COLS - 3; ++c) {
             for (int k = 0; k < 4; ++k) w[k] = b->cells[r + k][c + k];
-            score += score_window_chars(w, me);
+            score += score_window(w, me);
         }
     }
-    // Diagonal up-right
+    /* Diagonal up-right */
     for (int r = 3; r < ROWS; ++r) {
         for (int c = 0; c < COLS - 3; ++c) {
             for (int k = 0; k < 4; ++k) w[k] = b->cells[r - k][c + k];
-            score += score_window_chars(w, me);
+            score += score_window(w, me);
         }
     }
     return score;
@@ -159,10 +152,9 @@ static int score_position(const Board *b, char me) {
 static int opp_has_immediate_win_after(const Board *b0, char aiPiece, int playedCol) {
     if (playedCol < 0 || playedCol >= COLS) return 0;
     Board b = *b0;
-    int r = find_next_open_row(&b, playedCol);
-    if (r < 0) return 0;
+
     int placed_row = -1;
-    if (!board_drop(&b, playedCol, aiPiece, &placed_row)) return 0; // safety
+    if (!board_drop(&b, playedCol, aiPiece, &placed_row)) return 0;
 
     char opp = opp_of(aiPiece);
     for (int c = 0; c < COLS; ++c) {
@@ -174,6 +166,10 @@ static int opp_has_immediate_win_after(const Board *b0, char aiPiece, int played
     }
     return 0;
 }
+
+/* ===============================================================
+   Medium bot (heuristic 1-ply + safety)
+   =============================================================== */
 
 static int medium_rule_based_move(const Board *b0, char aiPiece) {
     int valid[COLS], nValid = 0;
@@ -220,7 +216,7 @@ static int medium_rule_based_move(const Board *b0, char aiPiece) {
         int row = -1;
         if (!board_drop(&b, c, aiPiece, &row)) continue;
         int s = score_position(&b, aiPiece);
-        // Center bias, smaller prefered
+        /* light center bias */
         s -= (c > center ? c - center : center - c);
         if (s > bestScore) { bestScore = s; bestCol = c; }
     }
@@ -228,7 +224,9 @@ static int medium_rule_based_move(const Board *b0, char aiPiece) {
     return bestCol;
 }
 
-// Main game loop
+/* ===============================================================
+   Main game loop
+   =============================================================== */
 
 int game_run(void) {
     Board b;
@@ -237,13 +235,13 @@ int game_run(void) {
     const char players[2] = { 'A', 'B' };
     int turn = 0;
 
-    puts("\\n=== Welcome to Connect Four (Console) ===");
-    puts("Players: A and B. Enter column 1-7 to drop a checker; 'q' to quit.\\n");
+    puts("\n=== Welcome to Connect Four (Console) ===");
+    puts("Players: A and B. Enter column 1-7 to drop a checker; 'q' to quit.\n");
 
     srand((unsigned)time(NULL));
     int mode = read_mode_choice();
     if (mode == 0) {
-        puts("\\nGoodbye!");
+        puts("\nGoodbye!");
         return 0;
     }
     puts("");
@@ -255,28 +253,32 @@ int game_run(void) {
         int col = -1;
 
         if (mode == 1 && p == 'B') {
-            // Easy Bot: choose any random valid column
+            /* Easy Bot: random valid column */
             col = random_valid_column(&b);
             if (col < 0) {
                 puts("It's a draw. No more moves!");
                 break;
             }
-            printf("EasyBot (Player B) chooses column %d\\n", col + 1);
+            printf("EasyBot (Player B) chooses column %d\n", col + 1);
         } else if (mode == 2 && p == 'B') {
-            // Medium Bot: heuristic 1-ply + safety
+            /* Medium Bot: heuristic 1-ply + safety */
             col = medium_rule_based_move(&b, 'B');
             if (col < 0) {
                 puts("It's a draw. No more moves!");
                 break;
             }
-            printf("MediumBot (Player B) chooses column %d\\n", col + 1);
+            printf("MediumBot (Player B) chooses column %d\n", col + 1);
         } else {
-            // Human turn (Player A vs bot in modes 1/2, both A & B in mode 3)
+            /* Human turn (Player A vs bot in modes 1/2, both A & B in mode 3) */
             printf("Player %c \xE2\x86\x92 ", p);
             IoStatus st = io_read_column(&col);
             if (st == IO_QUIT || st == IO_EOF_QUIT) {
-                puts("\\nGoodbye!");
+                puts("\nGoodbye!");
                 return 0;
+            }
+            if (st != IO_SUCCESS) {
+                /* retry */
+                continue;
             }
         }
 
@@ -288,7 +290,7 @@ int game_run(void) {
 
         if (board_is_winning(&b, row, col, p)) {
             board_print(&b, stdout);
-            printf("Player %c WINS!\\n", p);
+            printf("Player %c WINS!\n", p);
             break;
         }
 
@@ -298,7 +300,7 @@ int game_run(void) {
             break;
         }
 
-        turn ^= 1; // swap player
+        turn ^= 1; /* swap player */
     }
 
     puts("Press Enter to exit...");
