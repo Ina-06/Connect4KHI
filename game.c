@@ -44,10 +44,11 @@ static int read_mode_choice(void) {
 
     for (;;) {
         printf("Select mode:\n");
-        printf("  1 - Play against Easy Bot (You are Player A)\n");
+        printf("  1 - Play against Easy Bot   (You are Player A)\n");
         printf("  2 - Play against Medium Bot (You are Player A)\n");
-        printf("  3 - Two Player mode (A vs B)\n");
-        printf("Enter 1, 2, or 3: ");
+        printf("  3 - Play against Hard Bot   (You are Player A)\n");
+        printf("  4 - Two Player mode (A vs B)\n");
+        printf("Enter 1, 2, 3, or 4: ");
         fflush(stdout);
 
         if (!fgets(line, sizeof line, stdin)) {
@@ -69,13 +70,13 @@ static int read_mode_choice(void) {
         /* allow 'q'/'Q' to quit */
         if (*p == 'q' || *p == 'Q') return 0;
 
-        /* find first digit 1..3 anywhere in the line */
+        /* find first digit 1..4 anywhere in the line */
         while (*p && !isdigit((unsigned char)*p)) p++;
-        if (*p >= '1' && *p <= '3') {
+        if (*p >= '1' && *p <= '4') {
             return *p - '0';
         }
 
-        printf("Invalid choice. Please enter 1, 2, or 3.\n\n");
+        printf("Invalid choice. Please enter 1, 2, 3, or 4.\n\n");
     }
 }
 
@@ -219,6 +220,119 @@ static int medium_rule_based_move(const Board *b0, char aiPiece) {
 }
 
 /* ===============================================================
+   Hard bot: minimax + alpha-beta pruning
+   =============================================================== */
+
+static int minimax(Board *b, int depth, int maximizing,
+                   char me, int alpha, int beta) {
+    if (depth == 0 || board_full(b)) {
+        /* Evaluate position for the AI */
+        return score_position(b, me);
+    }
+
+    char current = maximizing ? me : opp_of(me);
+
+    if (maximizing) {
+        int best = INT_MIN;
+
+        for (int col = 0; col < COLS; ++col) {
+            if (b->cells[0][col] != ' ') continue; /* full column */
+
+            Board child = *b;
+            int row = -1;
+            if (!board_drop(&child, col, current, &row)) continue;
+
+            /* If this move wins immediately for the AI, value it very high */
+            if (board_is_winning(&child, row, col, current)) {
+                return 1000000 + depth; /* prefer quicker wins */
+            }
+
+            int val = minimax(&child, depth - 1, 0, me, alpha, beta);
+            if (val > best) best = val;
+            if (val > alpha) alpha = val;
+            if (beta <= alpha) break; /* prune */
+        }
+
+        if (best == INT_MIN) {
+            /* No moves? just evaluate */
+            return score_position(b, me);
+        }
+        return best;
+    } else {
+        int best = INT_MAX;
+
+        for (int col = 0; col < COLS; ++col) {
+            if (b->cells[0][col] != ' ') continue;
+
+            Board child = *b;
+            int row = -1;
+            if (!board_drop(&child, col, current, &row)) continue;
+
+            /* If opponent can win immediately, very bad for us */
+            if (board_is_winning(&child, row, col, current)) {
+                return -1000000 - depth; /* prefer slower losses */
+            }
+
+            int val = minimax(&child, depth - 1, 1, me, alpha, beta);
+            if (val < best) best = val;
+            if (val < beta) beta = val;
+            if (beta <= alpha) break; /* prune */
+        }
+
+        if (best == INT_MAX) {
+            return score_position(b, me);
+        }
+        return best;
+    }
+}
+
+/* Top-level: choose best move for hard bot. */
+static int hard_best_move(const Board *b0, char aiPiece, int depth) {
+    int bestCol   = -1;
+    int bestScore = INT_MIN;
+
+    /* Try columns in center-first order for better pruning. */
+    int colOrder[COLS];
+    int idx = 0;
+    int center = COLS / 2;
+    colOrder[idx++] = center;
+    for (int offset = 1; offset <= center; ++offset) {
+        int left  = center - offset;
+        int right = center + offset;
+        if (left >= 0)     colOrder[idx++] = left;
+        if (right < COLS)  colOrder[idx++] = right;
+    }
+
+    for (int i = 0; i < COLS; ++i) {
+        int col = colOrder[i];
+        if (b0->cells[0][col] != ' ') continue; /* column full */
+
+        Board child = *b0;
+        int row = -1;
+        if (!board_drop(&child, col, aiPiece, &row)) continue;
+
+        /* If we can win immediately, do it. */
+        if (board_is_winning(&child, row, col, aiPiece)) {
+            return col;
+        }
+
+        int score = minimax(&child, depth - 1, 0, aiPiece,
+                            INT_MIN / 2, INT_MAX / 2);
+
+        if (score > bestScore) {
+            bestScore = score;
+            bestCol   = col;
+        }
+    }
+
+    if (bestCol == -1) {
+        /* Fallback if no valid column found */
+        return random_valid_column(b0);
+    }
+    return bestCol;
+}
+
+/* ===============================================================
    Main game loop
    =============================================================== */
 
@@ -262,8 +376,17 @@ int game_run(void) {
                 break;
             }
             printf("MediumBot (Player B) chooses column %d\n", col + 1);
+        } else if (mode == 3 && p == 'B') {
+            /* Hard Bot: minimax + alpha-beta */
+            int hardDepth = 6;  /* adjust depth for strength vs. speed */
+            col = hard_best_move(&b, 'B', hardDepth);
+            if (col < 0) {
+                puts("It's a draw. No more moves!");
+                break;
+            }
+            printf("HardBot (Player B) chooses column %d\n", col + 1);
         } else {
-            /* Human turn */
+            /* Human turn (Player A in modes 1-3, both players in mode 4) */
             printf("Player %c \xE2\x86\x92 ", p);
             IoStatus st = io_read_column(&col);
             if (st == IO_QUIT || st == IO_EOF_QUIT) {
