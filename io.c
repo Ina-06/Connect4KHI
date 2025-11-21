@@ -5,12 +5,7 @@
 #include <ctype.h>
 #include <stdlib.h>
 
-/* Robust column reader:
-   - trims CRLF and spaces
-   - accepts the FIRST integer 1..7 on the line ("3", "3,", "  3 please")
-   - supports 'q'/'Q' to quit
-   - loops internally until valid, so it never returns IO_RETRY
-*/
+// column reader
 IoStatus io_read_column(int *out_col) {
     char buf[128];
 
@@ -20,37 +15,37 @@ IoStatus io_read_column(int *out_col) {
 
         if (!fgets(buf, sizeof buf, stdin)) {
             fputc('\n', stdout);
-            return IO_EOF_QUIT; /* Ctrl+D / EOF */
+            return IO_EOF_QUIT;
         }
 
-        /* strip trailing CR/LF and spaces */
+        // strip trailing spaces
         size_t n = strlen(buf);
         while (n > 0 && (buf[n-1] == '\n' || buf[n-1] == '\r' ||
                          isspace((unsigned char)buf[n-1]))) {
             buf[--n] = '\0';
         }
 
-        /* skip leading spaces */
+        // skip leading spaces
         char *p = buf;
         while (*p && isspace((unsigned char)*p)) p++;
 
-        /* quit? */
+        // quit prompt
         if (*p == 'q' || *p == 'Q') return IO_QUIT;
 
-        /* move to first digit/sign; accept first integer 1..7 */
+        // move to first digit -> accept first integer
         while (*p && !isdigit((unsigned char)*p) && *p != '+' && *p != '-') p++;
         if (!*p) {
             puts("Invalid input. Type a number 1-7 or 'q'.");
-            continue; /* reprompt */
+            continue; // reprompt
         }
 
         long v = strtol(p, NULL, 10);
         if (v < 1 || v > 7) {
             puts("Column must be between 1 and 7.");
-            continue; /* reprompt */
+            continue; // reprompt
         }
 
-        if (out_col) *out_col = (int)v - 1; /* map 1–7 to 0–6 */
+        if (out_col) *out_col = (int)v - 1; // map 1–7 to 0–6
         return IO_SUCCESS;
     }
 }
