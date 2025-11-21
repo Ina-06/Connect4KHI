@@ -1,6 +1,6 @@
 CC      ?= gcc
-CFLAGS  ?= -std=c11 -O2 -Wall -Wextra -Wpedantic
-LDFLAGS ?=
+CFLAGS  ?= -std=c11 -O2 -Wall -Wextra -Wpedantic -pthread
+LDFLAGS ?= -pthread
 
 SRC = \
     main.c \

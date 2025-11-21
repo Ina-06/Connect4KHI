@@ -7,21 +7,13 @@
 #include <string.h>
 #include <limits.h>
 #include <ctype.h>
+#include <pthread.h>
 
 /* ===============================================================
    Utilities
    =============================================================== */
 
 static inline char opp_of(char p) { return (p == 'A') ? 'B' : 'A'; }
-
-/* Optional helper (not required by board_drop) */
-static int find_next_open_row(const Board *b, int col) {
-    if (col < 0 || col >= COLS) return -1;
-    for (int r = ROWS - 1; r >= 0; --r) {
-        if (b->cells[r][col] == ' ') return r;
-    }
-    return -1;
-}
 
 /* Easy bot: choose a random valid column */
 static int random_valid_column(const Board *b) {
@@ -81,7 +73,7 @@ static int read_mode_choice(void) {
 }
 
 /* ===============================================================
-   Heuristic scoring (for 1-ply evaluation)
+   Heuristic scoring (for evaluation)
    =============================================================== */
 
 static int score_window(const char w[4], char me) {
@@ -107,7 +99,10 @@ static int score_position(const Board *b, char me) {
     /* Center bias */
     int center = COLS / 2;
     int centerCount = 0;
-    for (int r = 0; r < ROWS; ++r) if (b->cells[r][center] == me) ++centerCount;
+    for (int r = 0; r < ROWS; ++r) {
+        if (b->cells[r][center] == me)
+            ++centerCount;
+    }
     score += centerCount * 7;
 
     /* All windows of 4 */
@@ -116,28 +111,32 @@ static int score_position(const Board *b, char me) {
     /* Horizontal */
     for (int r = 0; r < ROWS; ++r) {
         for (int c = 0; c < COLS - 3; ++c) {
-            for (int k = 0; k < 4; ++k) w[k] = b->cells[r][c + k];
+            for (int k = 0; k < 4; ++k)
+                w[k] = b->cells[r][c + k];
             score += score_window(w, me);
         }
     }
     /* Vertical */
     for (int c = 0; c < COLS; ++c) {
         for (int r = 0; r < ROWS - 3; ++r) {
-            for (int k = 0; k < 4; ++k) w[k] = b->cells[r + k][c];
+            for (int k = 0; k < 4; ++k)
+                w[k] = b->cells[r + k][c];
             score += score_window(w, me);
         }
     }
     /* Diagonal down-right */
     for (int r = 0; r < ROWS - 3; ++r) {
         for (int c = 0; c < COLS - 3; ++c) {
-            for (int k = 0; k < 4; ++k) w[k] = b->cells[r + k][c + k];
+            for (int k = 0; k < 4; ++k)
+                w[k] = b->cells[r + k][c + k];
             score += score_window(w, me);
         }
     }
     /* Diagonal up-right */
     for (int r = 3; r < ROWS; ++r) {
         for (int c = 0; c < COLS - 3; ++c) {
-            for (int k = 0; k < 4; ++k) w[k] = b->cells[r - k][c + k];
+            for (int k = 0; k < 4; ++k)
+                w[k] = b->cells[r - k][c + k];
             score += score_window(w, me);
         }
     }
@@ -154,11 +153,12 @@ static int opp_has_immediate_win_after(const Board *b0, char aiPiece, int played
 
     char opp = opp_of(aiPiece);
     for (int c = 0; c < COLS; ++c) {
-        if (b.cells[0][c] != ' ') continue;
-        int rr = -1;
-        Board bb = b;
-        if (!board_drop(&bb, c, opp, &rr)) continue;
-        if (board_is_winning(&bb, rr, c, opp)) return 1;
+        if (b.cells[0][c] == ' ') {
+            int rr = -1;
+            Board bb = b;
+            if (!board_drop(&bb, c, opp, &rr)) continue;
+            if (board_is_winning(&bb, rr, c, opp)) return 1;
+        }
     }
     return 0;
 }
@@ -169,8 +169,10 @@ static int opp_has_immediate_win_after(const Board *b0, char aiPiece, int played
 
 static int medium_rule_based_move(const Board *b0, char aiPiece) {
     int valid[COLS], nValid = 0;
-    for (int c = 0; c < COLS; ++c)
-        if (b0->cells[0][c] == ' ') valid[nValid++] = c;
+    for (int c = 0; c < COLS; ++c) {
+        if (b0->cells[0][c] == ' ')
+            valid[nValid++] = c;
+    }
     if (nValid == 0) return -1;
 
     /* 1) Win now if possible */
@@ -196,7 +198,8 @@ static int medium_rule_based_move(const Board *b0, char aiPiece) {
     int safe[COLS], nSafe = 0;
     for (int i = 0; i < nValid; ++i) {
         int c = valid[i];
-        if (!opp_has_immediate_win_after(b0, aiPiece, c)) safe[nSafe++] = c;
+        if (!opp_has_immediate_win_after(b0, aiPiece, c))
+            safe[nSafe++] = c;
     }
     int *pool = (nSafe > 0) ? safe : valid;
     int nPool = (nSafe > 0) ? nSafe : nValid;
@@ -213,7 +216,10 @@ static int medium_rule_based_move(const Board *b0, char aiPiece) {
         if (!board_drop(&b, c, aiPiece, &row)) continue;
         int s = score_position(&b, aiPiece);
         s -= (c > center ? c - center : center - c); /* light center bias */
-        if (s > bestScore) { bestScore = s; bestCol = c; }
+        if (s > bestScore) {
+            bestScore = s;
+            bestCol = c;
+        }
     }
 
     return bestCol;
@@ -226,7 +232,6 @@ static int medium_rule_based_move(const Board *b0, char aiPiece) {
 static int minimax(Board *b, int depth, int maximizing,
                    char me, int alpha, int beta) {
     if (depth == 0 || board_full(b)) {
-        /* Evaluate position for the AI */
         return score_position(b, me);
     }
 
@@ -254,7 +259,6 @@ static int minimax(Board *b, int depth, int maximizing,
         }
 
         if (best == INT_MIN) {
-            /* No moves? just evaluate */
             return score_position(b, me);
         }
         return best;
@@ -286,47 +290,97 @@ static int minimax(Board *b, int depth, int maximizing,
     }
 }
 
-/* Top-level: choose best move for hard bot. */
-static int hard_best_move(const Board *b0, char aiPiece, int depth) {
-    int bestCol   = -1;
-    int bestScore = INT_MIN;
+/* -------- Multithreading at the root of minimax -------- */
 
-    /* Try columns in center-first order for better pruning. */
-    int colOrder[COLS];
-    int idx = 0;
-    int center = COLS / 2;
-    colOrder[idx++] = center;
-    for (int offset = 1; offset <= center; ++offset) {
-        int left  = center - offset;
-        int right = center + offset;
-        if (left >= 0)     colOrder[idx++] = left;
-        if (right < COLS)  colOrder[idx++] = right;
+typedef struct {
+    const Board *root;
+    char aiPiece;
+    int depth;
+    int col;
+    int score;
+    int valid;
+} MoveTask;
+
+static void *evaluate_move_thread(void *arg) {
+    MoveTask *task = (MoveTask *)arg;
+
+    if (task->root->cells[0][task->col] != ' ') {
+        task->valid = 0;
+        return NULL;
     }
 
-    for (int i = 0; i < COLS; ++i) {
-        int col = colOrder[i];
-        if (b0->cells[0][col] != ' ') continue; /* column full */
+    Board child = *(task->root);
+    int row = -1;
+    if (!board_drop(&child, task->col, task->aiPiece, &row)) {
+        task->valid = 0;
+        return NULL;
+    }
 
-        Board child = *b0;
-        int row = -1;
-        if (!board_drop(&child, col, aiPiece, &row)) continue;
+    /* Immediate win for AI? Give huge score. */
+    if (board_is_winning(&child, row, task->col, task->aiPiece)) {
+        task->score = 1000000 + task->depth;
+        task->valid = 1;
+        return NULL;
+    }
 
-        /* If we can win immediately, do it. */
-        if (board_is_winning(&child, row, col, aiPiece)) {
-            return col;
+    int score = minimax(&child, task->depth - 1, 0, task->aiPiece,
+                        INT_MIN / 2, INT_MAX / 2);
+    task->score = score;
+    task->valid = 1;
+    return NULL;
+}
+
+/* Choose best move for hard bot using one thread per possible column. */
+static int hard_best_move_parallel(const Board *b0, char aiPiece, int depth) {
+    pthread_t threads[COLS];
+    MoveTask tasks[COLS];
+    int created[COLS] = {0};
+
+    /* Spawn a thread for each non-full column */
+    for (int col = 0; col < COLS; ++col) {
+        if (b0->cells[0][col] != ' ') {
+            tasks[col].valid = 0;
+            continue;
         }
+        tasks[col].root = b0;
+        tasks[col].aiPiece = aiPiece;
+        tasks[col].depth = depth;
+        tasks[col].col = col;
+        tasks[col].score = INT_MIN;
+        tasks[col].valid = 0;
 
-        int score = minimax(&child, depth - 1, 0, aiPiece,
-                            INT_MIN / 2, INT_MAX / 2);
+        if (pthread_create(&threads[col], NULL, evaluate_move_thread, &tasks[col]) == 0) {
+            created[col] = 1;
+        } else {
+            tasks[col].valid = 0;
+        }
+    }
 
-        if (score > bestScore) {
-            bestScore = score;
-            bestCol   = col;
+    /* Join all created threads */
+    for (int col = 0; col < COLS; ++col) {
+        if (created[col]) {
+            (void)pthread_join(threads[col], NULL);
+        }
+    }
+
+    /* Pick best scored column, center-first tie-breaking */
+    int bestCol = -1;
+    int bestScore = INT_MIN;
+    int center = COLS / 2;
+
+    for (int offset = 0; offset < COLS; ++offset) {
+        int col = center + ((offset % 2 == 0) ? (offset / 2) : -(offset / 2 + 1));
+        if (col < 0 || col >= COLS) continue;
+        if (!tasks[col].valid) continue;
+
+        int s = tasks[col].score;
+        if (s > bestScore || bestCol == -1) {
+            bestScore = s;
+            bestCol = col;
         }
     }
 
     if (bestCol == -1) {
-        /* Fallback if no valid column found */
         return random_valid_column(b0);
     }
     return bestCol;
@@ -377,9 +431,9 @@ int game_run(void) {
             }
             printf("MediumBot (Player B) chooses column %d\n", col + 1);
         } else if (mode == 3 && p == 'B') {
-            /* Hard Bot: minimax + alpha-beta */
+            /* Hard Bot: minimax + alpha-beta with multithreading */
             int hardDepth = 6;  /* adjust depth for strength vs. speed */
-            col = hard_best_move(&b, 'B', hardDepth);
+            col = hard_best_move_parallel(&b, 'B', hardDepth);
             if (col < 0) {
                 puts("It's a draw. No more moves!");
                 break;
