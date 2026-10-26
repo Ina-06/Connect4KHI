@@ -2,9 +2,6 @@
 
 A console Connect Four game in C with three bot difficulties. The hardest searches the game tree in parallel, one thread per column, using Minimax with Alpha-Beta pruning.
 
-<!-- TODO: add a short terminal GIF of a game against the Hard bot, e.g. docs/demo.gif -->
-![Connect Four AI demo](docs/demo.gif)
-
 ## Features
 
 - **Four modes:** Easy, Medium and Hard bots, plus local two-player.
